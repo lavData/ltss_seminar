@@ -46,7 +46,7 @@ class SeqGeneralHoughTransform:
                     
     def magnitude(self, gradientX, gradientY, result):
         for i in range(0, gradientX.width * gradientX.height):
-            result.data[i] = math.sqrt(gradientX.data[i] * gradientX.data[i] + gradientY.data[i] * gradientY.data[i])
+            result.data[i] = math.sqrt(gradientX.data[i] ** 2 + gradientY.data[i] ** 2)
     
     def orientation(self, gradientX, gradientY, result):
         for i in range(0, gradientX.width * gradientX.height):
