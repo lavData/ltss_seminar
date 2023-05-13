@@ -1,58 +1,87 @@
-from image import GrayImage, Image
 import math
+
+import numpy
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+
+from src.image import Image, GrayImage
+from src.utils import keep_pixel_np, sobel_filter_x, sobel_filter_y
+
+THRESHOLD = 200
+IMAGE_DIR = '../../images'
 
 class SeqGeneralHoughTransform:
     def __init__(self, src, template):
         self.src = src
         self.template = template
-        
-    def accumulateSource(self):
-        print("----------Start processing and accumulating source----------\n")
-        
-        graySrc = GrayImage(self.src.width, self.src.height)
-        self.convertToGray(self.src, graySrc)
-        
-        
-        
+
+    def process_template(self):
+        print("----------Start processing template----------\n")
+
+        gray_src = GrayImage(self.src.width, self.src.height)
+        self.convertToGray(self.src, gray_src)
+
     def convertToGray(self, image, result):
-        for i in range(0, image.width * image.height):
-            result.data[i] = (image.data[3 * i] + image.data[3 * i + 1] + image.data[3 * i + 2]) / 3
-    
-    def convolve(self, sobelFilter, graySrc, result):
-        if len(sobelFilter) != 3 or len(sobelFilter[0]) != 3:
-            print("ERROR: Only apply for 3x3 filter ")
-            return
-        
-        for j in range(0, graySrc.height):
-            for i in range(0, graySrc.width):
-                tmp = 0.0
-                for jj in range(-1,2):
-                    for ii in range(-1,2):
-                        row = j + jj
-                        col = i + ii
-                        
-                        if row < 0 or row >= graySrc.height or col < 0 or col >= graySrc.width:
-                            # out of image bound, do nothing
-                            pass
-                        else:
-                            idx = row * graySrc.width + col
-                            tmp += graySrc.data[idx] * sobelFilter[jj + 1][ii + 1]
-                
-                # do not consider image boundary
-                if j == 0 or j == graySrc.height-1 or i == 0 or i == graySrc.width-1:
-                    result.data[j * graySrc.width + i] = 0
-                else:
-                    result.data[j * graySrc.width + i] = tmp
-                    
-    def magnitude(self, gradientX, gradientY, result):
-        for i in range(0, gradientX.width * gradientX.height):
-            result.data[i] = math.sqrt(gradientX.data[i] ** 2 + gradientY.data[i] ** 2)
-    
-    def orientation(self, gradientX, gradientY, result):
-        for i in range(0, gradientX.width * gradientX.height):
-            result.data[i] = math.fmod(math.atan2(gradientY.data[i], gradientX.data[i]) * 180 / math.pi + 360, 360)
-           
-        
-        
-    
-    
+        result.data = np.mean(image.data, axis=2)
+        plt.imshow(result.data, cmap='gray')
+        plt.savefig(f'{IMAGE_DIR}/gray_src.png')
+        plt.show()
+
+    def convolve(self, sobel_filter: numpy.array, gray_src: GrayImage, result: GrayImage, axis='x'):
+        """
+        :param sobel_filter:
+        :param gray_src:
+        :param result:
+        :param axis: 'x' or 'y'
+        :return:
+        """
+        if sobel_filter.shape != (3, 3):
+            raise Exception("Sobel filter must be 3x3")
+
+        result.data = np.convolve(gray_src.data.flatten(), sobel_filter.flatten(), 'same').reshape(gray_src.data.shape)
+        plt.imshow(result.data, cmap='gray')
+        plt.savefig(f'{IMAGE_DIR}/convolve_{axis}.png')
+        plt.show()
+
+    def magnitude(self, magnitude_x: GrayImage, magnitude_y: GrayImage, result: GrayImage):
+        result.data = np.sqrt(np.square(magnitude_x.data) + np.square(magnitude_y.data))
+        plt.imshow(result.data, cmap='gray')
+        plt.savefig(f'{IMAGE_DIR}/magnitude.png')
+        plt.show()
+
+    def orientation(self, gradient_x, gradient_y, result):
+        phi = np.arctan2(gradient_y.data, gradient_x.data)
+        result.data = np.mod(phi * 180 / np.pi + 360, 360)
+
+    def edgemns(self, magnitude: GrayImage, orientation: GrayImage, result):
+        pixel_gradient = ((orientation.data // 45).astype(int) * 45 % 180)
+        result.data = np.where(keep_pixel_np(magnitude, pixel_gradient), magnitude.data, 0)
+
+    def threshold(self, magnitude, result, threshold):
+        for i in range(0, magnitude.width * magnitude.height):
+            result.data[i] = 255 if magnitude.data[i] > threshold else 0
+
+    def create_r_table(self, orientation, magnitude_threshold):
+        pass
+
+if __name__ == "__main__":
+    template = cv2.imread("../../images/lane.png")
+    template = Image(template.shape[1], template.shape[0], template)
+    a = SeqGeneralHoughTransform(None, template)
+    gray_src = GrayImage(template.data.shape[1], template.data.shape[0])
+    a.convertToGray(template, gray_src)
+    magnitude_x = GrayImage(template.data.shape[1], template.data.shape[0])
+    magnitude_y = GrayImage(template.data.shape[1], template.data.shape[0])
+    magnitude = GrayImage(template.data.shape[1], template.data.shape[0])
+    a.convolve(sobel_filter_x, gray_src, magnitude_x, 'x')
+    a.convolve(sobel_filter_y, gray_src, magnitude_y, 'y')
+    a.magnitude(magnitude_x, magnitude_y, magnitude)
+    orientation = GrayImage(template.data.shape[1], template.data.shape[0])
+    a.orientation(magnitude_x, magnitude_y, orientation)
+    plt.imshow(magnitude.data, cmap='gray')
+    x, y = np.meshgrid(np.arange(orientation.width), np.arange(orientation.height))
+    dx = np.cos(np.deg2rad(orientation.data))
+    dy = -np.sin(np.deg2rad(orientation.data))
+    plt.quiver(x, y, dx, dy, orientation.data, cmap='gray')
+    plt.show()
