@@ -1,16 +1,9 @@
 import numpy as np
 
-
-class REntry:
-    def __init__(self, i_slice, r, alpha):
-        self.i_slice = i_slice
-        self.r = r
-        self.alpha = alpha
-
-
 # numpy array sobel filter
 sobel_filter_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
 sobel_filter_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
+
 
 def keepPixel(magnitude, i, j, gradient):
     neighbourOnei = i
@@ -46,23 +39,27 @@ def keepPixel(magnitude, i, j, gradient):
 
 # Keep Pixel function by numpy
 def keep_pixel_np(magnitude, pixel_gradient):
-    height, width = magnitude.shape
-    neighbour_one_i = np.arange(width) - (pixel_gradient == 0)
-    neighbour_one_j = np.arange(height)[:, np.newaxis] + (pixel_gradient == 45) - (pixel_gradient == 135)
-    neighbour_two_i = np.arange(width) + (pixel_gradient == 0)
-    neighbour_two_j = np.arange(height)[:, np.newaxis] - (pixel_gradient == 45) + (pixel_gradient == 135)
+    height, width = magnitude.data.shape
+    neighbour_one_i = np.tile(np.arange(width), (height, 1)) - (pixel_gradient == 0) + (pixel_gradient == 45) - (
+                pixel_gradient == 135)
+    neighbour_one_j = np.tile(np.arange(height)[:, np.newaxis], width) - (pixel_gradient == 45) - (
+                pixel_gradient == 90) - (pixel_gradient == 135)
+    neighbour_two_i = np.tile(np.arange(width), (height, 1)) + (pixel_gradient == 0) - (pixel_gradient == 45) + (
+                pixel_gradient == 135)
+    neighbour_two_j = np.tile(np.arange(height)[:, np.newaxis], width) + (pixel_gradient == 45) + (
+                pixel_gradient == 90) + (pixel_gradient == 135)
 
     valid_neighbour_one = (neighbour_one_i >= 0) & (neighbour_one_i < width) & (neighbour_one_j >= 0) & (
                 neighbour_one_j < height)
     valid_neighbour_two = (neighbour_two_i >= 0) & (neighbour_two_i < width) & (neighbour_two_j >= 0) & (
                 neighbour_two_j < height)
 
-    neighbour_one = np.zeros_like(magnitude)
-    neighbour_one[valid_neighbour_one] = magnitude[
+    neighbour_one = np.zeros_like(magnitude.data).astype(int)
+    neighbour_one[valid_neighbour_one] = magnitude.data[
         neighbour_one_j[valid_neighbour_one], neighbour_one_i[valid_neighbour_one]]
-    neighbour_two = np.zeros_like(magnitude)
-    neighbour_two[valid_neighbour_two] = magnitude[
+    neighbour_two = np.zeros_like(magnitude.data).astype(int)
+    neighbour_two[valid_neighbour_two] = magnitude.data[
         neighbour_two_j[valid_neighbour_two], neighbour_two_i[valid_neighbour_two]]
-    cur = magnitude
+    cur = magnitude.data
 
     return (neighbour_one <= cur) & (neighbour_two <= cur)

@@ -9,24 +9,53 @@ from src.image import Image, GrayImage
 from src.utils import keep_pixel_np, sobel_filter_x, sobel_filter_y
 
 THRESHOLD = 200
+N_ROTATION_SLICES = 72
+DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
 IMAGE_DIR = '../../images'
+
 
 class SeqGeneralHoughTransform:
     def __init__(self, src, template):
         self.src = src
         self.template = template
+        self.r_table = [[] for _ in range(N_ROTATION_SLICES)]
 
     def process_template(self):
         print("----------Start processing template----------\n")
 
-        gray_src = GrayImage(self.src.width, self.src.height)
-        self.convertToGray(self.src, gray_src)
+        # Gray convert
+        gray_src = GrayImage(template.data.shape[1], template.data.shape[0])
+        self.convertToGray(template, gray_src)
+
+        # Sobel filter
+        magnitude_x = GrayImage(template.data.shape[1], template.data.shape[0])
+        magnitude_y = GrayImage(template.data.shape[1], template.data.shape[0])
+        self.convolve(sobel_filter_x, gray_src, magnitude_x, 'x')
+        self.convolve(sobel_filter_y, gray_src, magnitude_y, 'y')
+
+        # Magnitude and orientation
+        magnitude = GrayImage(template.data.shape[1], template.data.shape[0])
+        self.magnitude(magnitude_x, magnitude_y, magnitude)
+        orientation = GrayImage(template.data.shape[1], template.data.shape[0])
+        self.orientation(magnitude_x, magnitude_y, orientation)
+
+        # Edge minmax
+        edge_minmax = GrayImage(template.data.shape[1], template.data.shape[0])
+        self.edgemns(magnitude, orientation, edge_minmax)
+
+        # Threshold
+        mag_threshold = GrayImage(template.data.shape[1], template.data.shape[0])
+        self.threshold(edge_minmax, mag_threshold, THRESHOLD)
+
+        # Create R-table
+        self.create_r_table(orientation, mag_threshold)
+
 
     def convertToGray(self, image, result):
         result.data = np.mean(image.data, axis=2)
-        plt.imshow(result.data, cmap='gray')
-        plt.savefig(f'{IMAGE_DIR}/gray_src.png')
-        plt.show()
+        # plt.imshow(result.data, cmap='gray')
+        # plt.savefig(f'{IMAGE_DIR}/gray_src.png')
+        # plt.show()
 
     def convolve(self, sobel_filter: numpy.array, gray_src: GrayImage, result: GrayImage, axis='x'):
         """
@@ -40,15 +69,15 @@ class SeqGeneralHoughTransform:
             raise Exception("Sobel filter must be 3x3")
 
         result.data = np.convolve(gray_src.data.flatten(), sobel_filter.flatten(), 'same').reshape(gray_src.data.shape)
-        plt.imshow(result.data, cmap='gray')
-        plt.savefig(f'{IMAGE_DIR}/convolve_{axis}.png')
-        plt.show()
+        # plt.imshow(result.data, cmap='gray')
+        # plt.savefig(f'{IMAGE_DIR}/convolve_{axis}.png')
+        # plt.show()
 
     def magnitude(self, magnitude_x: GrayImage, magnitude_y: GrayImage, result: GrayImage):
         result.data = np.sqrt(np.square(magnitude_x.data) + np.square(magnitude_y.data))
-        plt.imshow(result.data, cmap='gray')
-        plt.savefig(f'{IMAGE_DIR}/magnitude.png')
-        plt.show()
+        # plt.imshow(result.data, cmap='gray')
+        # plt.savefig(f'{IMAGE_DIR}/magnitude.png')
+        # plt.show()
 
     def orientation(self, gradient_x, gradient_y, result):
         phi = np.arctan2(gradient_y.data, gradient_x.data)
@@ -57,31 +86,36 @@ class SeqGeneralHoughTransform:
     def edgemns(self, magnitude: GrayImage, orientation: GrayImage, result):
         pixel_gradient = ((orientation.data // 45).astype(int) * 45 % 180)
         result.data = np.where(keep_pixel_np(magnitude, pixel_gradient), magnitude.data, 0)
+        # plt.imshow(result.data, cmap='gray')
+        # plt.savefig(f'{IMAGE_DIR}/minmax.png')
+        # plt.show()
 
-    def threshold(self, magnitude, result, threshold):
-        for i in range(0, magnitude.width * magnitude.height):
-            result.data[i] = 255 if magnitude.data[i] > threshold else 0
+    def threshold(self, magnitude: GrayImage, result: GrayImage, threshold: int):
+        result.data = np.where(magnitude.data > threshold, 255, 0)
+        # plt.imshow(result.data, cmap='gray')
+        # plt.savefig(f'{IMAGE_DIR}/threshold.png')
+        # plt.show()
 
     def create_r_table(self, orientation, magnitude_threshold):
-        pass
+        indices_j, indices_i = np.where(magnitude_threshold.data == 255)
+
+        phi = np.fmod(orientation.data[indices_j, indices_i], 360)
+        i_slice = (phi / DELTA_ROTATION_ANGLE).astype(int)
+
+        center_x = orientation.width // 2
+        center_y = orientation.height // 2
+        entry_x = center_x - indices_i
+        entry_y = center_y - indices_j
+
+        r = np.sqrt(entry_x ** 2 + entry_y ** 2)
+        alpha = np.arctan2(entry_y, entry_x)
+
+        for i in range(len(indices_i)):
+            entry = {'r': r[i], 'alpha': alpha[i]}
+            self.r_table[i_slice[i]].append(entry)
+
 
 if __name__ == "__main__":
     template = cv2.imread("../../images/lane.png")
     template = Image(template.shape[1], template.shape[0], template)
     a = SeqGeneralHoughTransform(None, template)
-    gray_src = GrayImage(template.data.shape[1], template.data.shape[0])
-    a.convertToGray(template, gray_src)
-    magnitude_x = GrayImage(template.data.shape[1], template.data.shape[0])
-    magnitude_y = GrayImage(template.data.shape[1], template.data.shape[0])
-    magnitude = GrayImage(template.data.shape[1], template.data.shape[0])
-    a.convolve(sobel_filter_x, gray_src, magnitude_x, 'x')
-    a.convolve(sobel_filter_y, gray_src, magnitude_y, 'y')
-    a.magnitude(magnitude_x, magnitude_y, magnitude)
-    orientation = GrayImage(template.data.shape[1], template.data.shape[0])
-    a.orientation(magnitude_x, magnitude_y, orientation)
-    plt.imshow(magnitude.data, cmap='gray')
-    x, y = np.meshgrid(np.arange(orientation.width), np.arange(orientation.height))
-    dx = np.cos(np.deg2rad(orientation.data))
-    dy = -np.sin(np.deg2rad(orientation.data))
-    plt.quiver(x, y, dx, dy, orientation.data, cmap='gray')
-    plt.show()
