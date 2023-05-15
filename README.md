@@ -54,6 +54,9 @@ Bước này ta sẽ dùng công thức GrayScale để chuyển một pixel 3 c
 GrayScale = 0.299 * R + 0.587 * G + 0.114 * B
 ```
 Trong đó R, G, B lần lượt là giá trị của 3 kênh màu Red, Green, Blue.
+
+![GrayScale](./images/gray_template.png "GrayScale")
+
 #### 3.1.3 Edge Detector
 Áp dụng bộ lọc Sobel để phát hiện cạnh của mẫu. Bộ lọc Sobel được áp dụng theo hai hướng: ngang và dọc.
 
@@ -62,7 +65,11 @@ Trong đó R, G, B lần lượt là giá trị của 3 kênh màu Red, Green, B
 SobelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]
 SobelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]]
 ```
-Sau khi tích chập ta sẽ được 2 ma trận mới là `Gx` và `Gy`. 
+Sau khi tích chập ta sẽ được 2 ma trận mới là `Gx` và `Gy`.
+
+![Sobel Filter X](./images/sobel_x_template.png "Sobel Filter X")
+![Sobel Filter Y](./images/sobel_y_template.png "Sobel Filter Y")
+
 #### 3.1.4 Magnitude and Orientation
 Ta sẽ tính toán độ lớn và hướng của cạnh của mẫu bằng cách sử dụng hàm `magnitude` và `orientation` với kết quả từ bước 2.
 
@@ -74,6 +81,9 @@ Với `orientation` ta sẽ tính hướng của cạnh bằng cách sử dụng
 ```python
 orientation = arctan(Gy / Gx)
 ```
+
+![Magnitude](./images/magnitude_template.png "Magnitude")
+
 #### 3.1.5 Edge Minmax
 Áp dụng kỹ thuật edge minmax (edgemns) để tìm các điểm cạnh tối đa trong mẫu.
 Cụ thể, ta sẽ slice góc của cạnh thành các góc $\pi$/4 và so sánh với các neighbour của nó tùy thuộc với từng góc. Nếu nó là cực đại trong các neighbour của nó thì nó sẽ được giữ lại, ngược lại nó sẽ bị loại bỏ.
@@ -82,13 +92,17 @@ Với slice góc $\pi$/4 ta sẽ có 4 trường hợp:
 - Góc 0: ta sẽ so sánh với các điểm ở bên trái và bên phải của nó.
 - Góc $\pi$/4: ta sẽ so sánh với các điểm ở bên trái trên và bên phải dưới của nó.
 - Góc $\pi$/2: ta sẽ so sánh với các điểm ở bên trên và bên dưới của nó.
-- Góc 3$\pi$/4: ta sẽ so sánh với các điểm ở bên trái dưới và bên phải trên của nó.
+- Góc $3\pi$/4: ta sẽ so sánh với các điểm ở bên trái dưới và bên phải trên của nó.
+
+![Edge Minmax](./images/edge_minmax_template.png "Edge Minmax")
 
 #### 3.1.6 Threshold
 Từ kết quả của edge minmax ta sẽ áp dụng ngưỡng (threshold) để tạo ra một bức ảnh nhị phân từ các điểm cạnh tối đa đã tìm được.
 Nếu một điểm có giá trị lớn hơn ngưỡng thì nó sẽ được gán giá trị 255, ngược lại nó sẽ được gán giá trị 0.
 
 Việc này dùng để cho mẫu ảnh sẽ bớt nhiễu và tập trung vào các điểm cạnh tối đa.
+
+![Threshold](./images/threshold_template.png "Threshold")
 
 #### 3.1.7 R-table computing ($\phi$-table)
 Tạo bảng R (R-table) bằng cách kết quả từ bước 3 và 5. Bảng R sẽ được sử dụng trong quá trình tìm kiếm đối tượng trong ảnh.
@@ -101,8 +115,11 @@ Cách tạo bảng R như sau:
 5. Tính toán góc alpha mà mỗi điểm cạnh tạo với trục tọa độ x. Kết quả được lưu vào biến alpha. 
 6. Với mỗi điểm cạnh, tạo một mục mới trong bảng R chứa các giá trị r và alpha tương ứng. Mục này sẽ được lưu trữ trong bin R được xác định ở bước 3. Các mục này được lưu trữ trong một danh sách các mục trong bảng R, được đại diện bằng một mảng 2D, với các hàng tương ứng với các bin R khác nhau.
 
+![R-table](./images/r_table.png "R-table")
+![R-table 2](./images/r_table_2.png "R-table 2")
 
-### 3.3 Tính toán lũy tiến & Tìm ứng viên
+### 3.2 Accumulate Source 
+
 
 ### 3.4
 
