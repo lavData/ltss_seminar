@@ -10,6 +10,12 @@ from src.utils import keep_pixel_np, sobel_filter_x, sobel_filter_y
 
 THRESHOLD = 200
 N_ROTATION_SLICES = 72
+MAX_SCALE = 1.4
+MIN_SCALE = 0.6
+DELTA_SCALE_RATIO = 0.1
+N_SCALE_SLICE = int((MAX_SCALE - MIN_SCALE) // DELTA_SCALE_RATIO + 1)
+BLOCK_SIZE = 10
+THRESHOLD_RATIO = 0.3
 DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
 IMAGE_DIR = '../../images'
 
@@ -114,8 +120,82 @@ class SeqGeneralHoughTransform:
             entry = {'r': r[i], 'alpha': alpha[i]}
             self.r_table[i_slice[i]].append(entry)
 
+    def accumulate(self, mag_threshold: GrayImage, orient: GrayImage):
+        width = self.src.data.shape[1]
+        height = self.src.data.shape[0]
+        wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
+        hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        accumulator = np.zeros((hblock, wblock), dtype=np.int)
+        block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int),])
+
+        _max = 0
+        for j in range(height):
+            for i in range(width):
+                if mag_threshold.data[j][i] == 255:
+                    phi = orient.data[j][i]
+                    i_slice = int(phi // DELTA_ROTATION_ANGLE)
+                    entries = self.r_table[i_slice]
+                    for entry in entries:
+                        r = entry['r']
+                        alpha = entry['alpha']
+                        xc = int(i + r * math.cos(alpha))
+                        yc = int(j + r * math.sin(alpha))
+
+                        if xc < 0 or xc >= width or yc < 0 or yc >= height:
+                            continue
+                        accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
+                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits'] = accumulator[yc // BLOCK_SIZE][
+                            xc // BLOCK_SIZE]
+                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['x'] = xc
+                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
+                        if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
+                            _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
+
+        maxima_thres = round(_max * THRESHOLD_RATIO)
+        figure = plt.figure(figsize=(12, 12))
+        subplot1 = figure.add_subplot(1, 4, 1)
+        subplot1.imshow(template.data)
+        subplot2 = figure.add_subplot(1, 4, 2)
+        subplot2.imshow(mag_threshold.data, cmap="gray")
+        for j in range(hblock):
+            for i in range(wblock):
+                if block_maxima[j][i]['hits'] > maxima_thres:
+                    subplot2.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
+
+    def accumulate_src(self):
+        print("----------Start accumulating src----------\n")
+        # Gray convert
+        gray_src = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        self.convertToGray(self.src, gray_src)
+
+        # Sobel filter
+        magnitude_x = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        magnitude_y = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        self.convolve(sobel_filter_x, gray_src, magnitude_x, 'x')
+        self.convolve(sobel_filter_y, gray_src, magnitude_y, 'y')
+
+        # Magnitude and orientation
+        magnitude = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        self.magnitude(magnitude_x, magnitude_y, magnitude)
+        orientation = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        self.orientation(magnitude_x, magnitude_y, orientation)
+
+        # Edge minmax
+        edge_minmax = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        self.edgemns(magnitude, orientation, edge_minmax)
+
+        # Threshold
+        mag_threshold = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        self.threshold(edge_minmax, mag_threshold, THRESHOLD)
+
+        # Accumulate
+        self.accumulate(mag_threshold, orientation)
+        print("----------End accumulating src----------\n")
+
 
 if __name__ == "__main__":
-    template = cv2.imread("../../images/lane.png")
+    template = cv2.imread("../../images/leaves.png")
     template = Image(template.shape[1], template.shape[0], template)
     a = SeqGeneralHoughTransform(None, template)
+    a.process_template()
