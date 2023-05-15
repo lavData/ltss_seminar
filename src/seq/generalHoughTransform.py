@@ -126,8 +126,8 @@ class SeqGeneralHoughTransform:
         wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
         hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
 
-        accumulator = np.zeros((hblock, wblock), dtype=np.int)
-        block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int),])
+        accumulator = np.zeros((hblock, wblock), dtype=np.int32)
+        block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
 
         _max = 0
         for j in range(height):
@@ -155,13 +155,16 @@ class SeqGeneralHoughTransform:
         maxima_thres = round(_max * THRESHOLD_RATIO)
         figure = plt.figure(figsize=(12, 12))
         subplot1 = figure.add_subplot(1, 4, 1)
-        subplot1.imshow(template.data)
+        subplot1.imshow(self.src.data)
         subplot2 = figure.add_subplot(1, 4, 2)
         subplot2.imshow(mag_threshold.data, cmap="gray")
         for j in range(hblock):
             for i in range(wblock):
                 if block_maxima[j][i]['hits'] > maxima_thres:
                     subplot2.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
+
+        plt.savefig(f'{IMAGE_DIR}/output.png')
+        plt.show()
 
     def accumulate_src(self):
         print("----------Start accumulating src----------\n")
@@ -195,7 +198,10 @@ class SeqGeneralHoughTransform:
 
 
 if __name__ == "__main__":
-    template = cv2.imread("../../images/leaves.png")
+    template = cv2.imread("../../images/leaf.png")
+    src = cv2.imread("../../images/leaves.png")
     template = Image(template.shape[1], template.shape[0], template)
-    a = SeqGeneralHoughTransform(None, template)
+    src = Image(src.shape[1], src.shape[0], src)
+    a = SeqGeneralHoughTransform(src, template)
     a.process_template()
+    a.accumulate_src()
