@@ -1,6 +1,5 @@
 import math
-
-import numpy
+import time
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
@@ -28,35 +27,58 @@ class SeqGeneralHoughTransform:
 
     def process_template(self):
         print("----------Start processing template----------\n")
+        time_process = 0
 
         # Gray convert
         gray_src = GrayImage(template.data.shape[1], template.data.shape[0])
-        self.convertToGray(template, gray_src, type_input='template')
+        start = time.time()
+        self.convertToGray(template, gray_src)
+        end = time.time()
+        time_process += end - start
 
         # Sobel filter
         magnitude_x = GrayImage(template.data.shape[1], template.data.shape[0])
         magnitude_y = GrayImage(template.data.shape[1], template.data.shape[0])
-        self.convolve(sobel_filter_x, gray_src, magnitude_x, 'x', type_input='template')
-        self.convolve(sobel_filter_y, gray_src, magnitude_y, 'y', type_input='template')
+        start = time.time()
+        self.convolve(sobel_filter_x, gray_src, magnitude_x, 'x')
+        self.convolve(sobel_filter_y, gray_src, magnitude_y, 'y')
+        end = time.time()
+        time_process += end - start
 
         # Magnitude and orientation
         magnitude = GrayImage(template.data.shape[1], template.data.shape[0])
+        start = time.time()
         self.magnitude(magnitude_x, magnitude_y, magnitude, type_input='template')
+        end = time.time()
+        time_process += end - start
         orientation = GrayImage(template.data.shape[1], template.data.shape[0])
+        start = time.time()
         self.orientation(magnitude_x, magnitude_y, orientation)
+        end = time.time()
+        time_process += end - start
 
         # Edge minmax
         edge_minmax = GrayImage(template.data.shape[1], template.data.shape[0])
+        start = time.time()
         self.edgemns(magnitude, orientation, edge_minmax, type_input='template')
+        end = time.time()
+        time_process += end - start
 
         # Threshold
         mag_threshold = GrayImage(template.data.shape[1], template.data.shape[0])
+        start = time.time()
         self.threshold(edge_minmax, mag_threshold, THRESHOLD, type_input='template')
+        end = time.time()
+        time_process += end - start
 
         # Create R-table
+        start = time.time()
         self.create_r_table(orientation, mag_threshold)
+        end = time.time()
+        time_process += end - start
 
         print("----------End processing template----------\n")
+        print(f"Time processing template: {time_process}\n")
 
     def convertToGray(self, image, result, type_input=None):
         result.data = np.mean(image.data, axis=2)
@@ -64,7 +86,7 @@ class SeqGeneralHoughTransform:
             plt.imshow(result.data, cmap='gray')
             plt.savefig(f'{IMAGE_DIR}/gray_{type_input}.png')
 
-    def convolve(self, sobel_filter: numpy.array, gray_src: GrayImage, result: GrayImage, axis='x', type_input=None):
+    def convolve(self, sobel_filter: np.array, gray_src: GrayImage, result: GrayImage, axis='x', type_input=None):
         """
         :param sobel_filter:
         :param gray_src:
@@ -165,34 +187,58 @@ class SeqGeneralHoughTransform:
 
     def accumulate_src(self):
         print("----------Start accumulating src----------\n")
+        time_process = 0
+
         # Gray convert
         gray_src = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        self.convertToGray(self.src, gray_src, type_input='src')
+        start = time.time()
+        self.convertToGray(self.src, gray_src)
+        end = time.time()
+        time_process += end - start
 
         # Sobel filter
         magnitude_x = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
         magnitude_y = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        self.convolve(sobel_filter_x, gray_src, magnitude_x, 'x', type_input='src')
-        self.convolve(sobel_filter_y, gray_src, magnitude_y, 'y', type_input='src')
+        start = time.time()
+        self.convolve(sobel_filter_x, gray_src, magnitude_x)
+        self.convolve(sobel_filter_y, gray_src, magnitude_y)
+        end = time.time()
+        time_process += end - start
 
         # Magnitude and orientation
         magnitude = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        self.magnitude(magnitude_x, magnitude_y, magnitude, type_input='src')
+        start = time.time()
+        self.magnitude(magnitude_x, magnitude_y, magnitude)
+        end = time.time()
+        time_process += end - start
         orientation = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
+        start = time.time()
         self.orientation(magnitude_x, magnitude_y, orientation)
+        end = time.time()
+        time_process += end - start
 
         # Edge minmax
         edge_minmax = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        self.edgemns(magnitude, orientation, edge_minmax , type_input='src')
+        start = time.time()
+        self.edgemns(magnitude, orientation, edge_minmax)
+        end = time.time()
+        time_process += end - start
 
         # Threshold
         mag_threshold = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        self.threshold(edge_minmax, mag_threshold, THRESHOLD, type_input='src')
+        start = time.time()
+        self.threshold(edge_minmax, mag_threshold, THRESHOLD)
+        end = time.time()
+        time_process += end - start
 
         # Accumulate
+        start = time.time()
         self.accumulate(mag_threshold, orientation)
-        print("----------End accumulating src----------\n")
+        end = time.time()
+        time_process += end - start
 
+        print("----------End accumulating src----------\n")
+        print(f"Time process: {time_process}s\n")
 
 if __name__ == "__main__":
     template = cv2.imread("../../images/leaf.png")
