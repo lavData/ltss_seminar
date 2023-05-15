@@ -116,14 +116,51 @@ Cách tạo bảng R như sau:
 6. Với mỗi điểm cạnh, tạo một mục mới trong bảng R chứa các giá trị r và alpha tương ứng. Mục này sẽ được lưu trữ trong bin R được xác định ở bước 3. Các mục này được lưu trữ trong một danh sách các mục trong bảng R, được đại diện bằng một mảng 2D, với các hàng tương ứng với các bin R khác nhau.
 
 ![R-table](./images/r_table.png "R-table")
-![R-table 2](./images/r_table_2.png "R-table 2")
+![R-table 2](./images/r_table2.png "R-table 2")
 
 ### 3.2 Accumulate Source 
+Ở bước này ta sẽ lặp lại các bước xử lí ảnh như phần Template. Và sử dụng dữ liệu từ R-table để tìm kiếm đối tượng trong ảnh.
+Điểm khác biệt ở phần này chính là phần tích lũy (accumualte) các điểm cạnh tìm được trong ảnh. Với mỗi điểm cạnh ta sẽ có được orientation của điểm cạnh. Dựa vào R-table, ta sẽ tính được điểm center của đối tượng trong ảnh. Từ đó ta sẽ tính lũy thông số center của đối tượng trong ảnh.
 
+Việc tính tọa độ center của đối tượng trong ảnh được tính bởi công thưc sau:
+```python
+x = x0 + r * cos(alpha + phi)
+y = y0 + r * sin(alpha + phi)
+```
+Trong đó:
+- `x0` và `y0` là tọa độ của điểm cạnh trong ảnh.
+- `r` là khoảng cách từ điểm cạnh tới trung tâm của mẫu.
+- `alpha` là góc mà điểm cạnh tạo với trục tọa độ x.
+- `phi` là góc của điểm cạnh trong mẫu.
 
-### 3.4
+Sau khi tích lũy xong, ta sẽ có một ma trận tích lũy, từ đó có được các cực đại địa phương (local maxima) của ma trận tích lũy. Các cực đại địa phương này chính là các điểm center của đối tượng trong ảnh.
+
+![Accumulate Source](./images/output.png "Accumulate Source")
+
+## Install and Run
+Để cài dặt và chạy chương trình. Trước tiên cần chạy file `setup.py` để cài đặt các thư viện cần thiết cho chương trình.
+```bash
+git clone git@github.com:lavData/ltss_seminar.git
+cd ltss_seminar
+pip install -e .
+```
+Để chạy chương trình ta chạy dòng code này ở một file python hay notebook.
+
+```python
+import cv2
+from src.seq import SeqGeneralHoughTransform
+template = cv2.imread('images/template.png', 0)
+src = cv2.imread('images/source.png', 0)
+seq = SeqGeneralHoughTransform(template, src)
+```
 
 ## The Challenge
 
-- Song song
-- Phức tạp trong việc tìm điểm trung tâm của các hình dạng không có hình thù xác định.
+- Mục tiêu song song hóa nhóm chưa thực hiện được. Cần speed run ở 2 tuần tiếp theo. 
+- Nhóm có mục tiêu tăng chiều của bài toán, hiện tại bài toán chỉ có 2 chiều (height, width), nhưng muốn tăng lên 4 chiều (height, width, depth, rotation) thì sẽ gặp khó khăn về thời gian tính toán.
+
+## References
+- [Generalized Hough Transform](https://en.wikipedia.org/wiki/Generalised_Hough_transform)
+- [Lines Detection with Hough Transform](https://towardsdatascience.com/lines-detection-with-hough-transform-84020b3b1549#:~:text=The%20Hough%20Transform%20is%20an,and%20quadrilaterals%20of%20specific%20types.)
+- [Parallel Object Detector with Generalized Hough Transform](https://github.com/YijieChen720/Parallel-Object-Detector-with-Generalized-Hough-Transform/blob/main/README.md)
+- [Sobel Filter](https://homepages.inf.ed.ac.uk/rbf/HIPR2/sobel.htm)

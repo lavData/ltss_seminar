@@ -154,15 +154,11 @@ class SeqGeneralHoughTransform:
                             _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
 
         maxima_thres = round(_max * THRESHOLD_RATIO)
-        figure = plt.figure(figsize=(12, 12))
-        subplot1 = figure.add_subplot(1, 4, 1)
-        subplot1.imshow(self.src.data)
-        subplot2 = figure.add_subplot(1, 4, 2)
-        subplot2.imshow(mag_threshold.data, cmap="gray")
+        plt.imshow(self.src.data)
         for j in range(hblock):
             for i in range(wblock):
                 if block_maxima[j][i]['hits'] > maxima_thres:
-                    subplot2.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
+                    plt.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
 
         plt.savefig(f'{IMAGE_DIR}/output.png')
         plt.show()
