@@ -20,9 +20,9 @@ IMAGE_DIR = '../../images'
 
 
 class SeqGeneralHoughTransform:
-    def __init__(self, src, template):
-        self.src = src
-        self.template = template
+    def __init__(self, src: np.array, template: np.array):
+        self.src = Image(src.shape[1], src.shape[0], src)
+        self.template = Image(template.shape[1], template.shape[0], template)
         self.r_table = [[] for _ in range(N_ROTATION_SLICES)]
 
     def process_template(self):
@@ -30,44 +30,44 @@ class SeqGeneralHoughTransform:
         time_process = 0
 
         # Gray convert
-        gray_src = GrayImage(template.data.shape[1], template.data.shape[0])
+        gray_src = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.convertToGray(template, gray_src)
+        self.convertToGray(self.template, gray_src)
         end = time.time()
         time_process += end - start
 
         # Sobel filter
-        magnitude_x = GrayImage(template.data.shape[1], template.data.shape[0])
-        magnitude_y = GrayImage(template.data.shape[1], template.data.shape[0])
+        magnitude_x = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
+        magnitude_y = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.convolve(sobel_filter_x, gray_src, magnitude_x, 'x')
-        self.convolve(sobel_filter_y, gray_src, magnitude_y, 'y')
+        self.convolve(sobel_filter_x, gray_src, magnitude_x)
+        self.convolve(sobel_filter_y, gray_src, magnitude_y)
         end = time.time()
         time_process += end - start
 
         # Magnitude and orientation
-        magnitude = GrayImage(template.data.shape[1], template.data.shape[0])
+        magnitude = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.magnitude(magnitude_x, magnitude_y, magnitude, type_input='template')
+        self.magnitude(magnitude_x, magnitude_y, magnitude)
         end = time.time()
         time_process += end - start
-        orientation = GrayImage(template.data.shape[1], template.data.shape[0])
+        orientation = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
         self.orientation(magnitude_x, magnitude_y, orientation)
         end = time.time()
         time_process += end - start
 
         # Edge minmax
-        edge_minmax = GrayImage(template.data.shape[1], template.data.shape[0])
+        edge_minmax = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.edgemns(magnitude, orientation, edge_minmax, type_input='template')
+        self.edgemns(magnitude, orientation, edge_minmax)
         end = time.time()
         time_process += end - start
 
         # Threshold
-        mag_threshold = GrayImage(template.data.shape[1], template.data.shape[0])
+        mag_threshold = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.threshold(edge_minmax, mag_threshold, THRESHOLD, type_input='template')
+        self.threshold(edge_minmax, mag_threshold, THRESHOLD)
         end = time.time()
         time_process += end - start
 
@@ -143,7 +143,7 @@ class SeqGeneralHoughTransform:
             entry = {'r': r[i], 'alpha': alpha[i]}
             self.r_table[i_slice[i]].append(entry)
 
-    def accumulate(self, mag_threshold: GrayImage, orient: GrayImage):
+    def accumulate(self, mag_threshold: GrayImage, orient: GrayImage, image_dir=IMAGE_DIR):
         width = self.src.data.shape[1]
         height = self.src.data.shape[0]
         wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
@@ -182,10 +182,10 @@ class SeqGeneralHoughTransform:
                 if block_maxima[j][i]['hits'] > maxima_thres:
                     plt.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
 
-        plt.savefig(f'{IMAGE_DIR}/output.png')
+        plt.savefig(f'{image_dir}/output.png')
         plt.show()
 
-    def accumulate_src(self):
+    def accumulate_src(self, image_dir):
         print("----------Start accumulating src----------\n")
         time_process = 0
 
@@ -233,18 +233,9 @@ class SeqGeneralHoughTransform:
 
         # Accumulate
         start = time.time()
-        self.accumulate(mag_threshold, orientation)
+        self.accumulate(mag_threshold, orientation, image_dir)
         end = time.time()
         time_process += end - start
 
         print("----------End accumulating src----------\n")
         print(f"Time process: {time_process}s\n")
-
-if __name__ == "__main__":
-    template = cv2.imread("../../images/leaf.png")
-    src = cv2.imread("../../images/leaves.png")
-    template = Image(template.shape[1], template.shape[0], template)
-    src = Image(src.shape[1], src.shape[0], src)
-    a = SeqGeneralHoughTransform(src, template)
-    a.process_template()
-    a.accumulate_src()

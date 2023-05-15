@@ -153,6 +153,7 @@ template = cv2.imread('images/template.png', 0)
 src = cv2.imread('images/source.png', 0)
 seq = SeqGeneralHoughTransform(template, src)
 ```
+![Output2](./images/output2.png "Output2")
 
 ## The Challenge
 
