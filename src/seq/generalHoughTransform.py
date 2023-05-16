@@ -1,11 +1,8 @@
 import math
 import time
 import numpy as np
-import cv2
 import matplotlib.pyplot as plt
 
-from src.image import Image, GrayImage
-from src.utils import keep_pixel_np, sobel_filter_x, sobel_filter_y
 
 THRESHOLD = 200
 N_ROTATION_SLICES = 72
@@ -19,55 +16,83 @@ DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
 IMAGE_DIR = '../../images'
 
 
+# numpy array sobel filter
+sobel_filter_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+sobel_filter_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
+
+
+# Keep Pixel function by numpy
+def keep_pixel_np(magnitude: np.ndarray, pixel_gradient: np.ndarray):
+    height, width = magnitude.shape
+    neighbour_one_i = np.tile(np.arange(width), (height, 1)) - (pixel_gradient == 0) + (pixel_gradient == 45) - (
+            pixel_gradient == 135)
+    neighbour_one_j = np.tile(np.arange(height)[:, np.newaxis], width) - (pixel_gradient == 45) - (
+            pixel_gradient == 90) - (pixel_gradient == 135)
+    neighbour_two_i = np.tile(np.arange(width), (height, 1)) + (pixel_gradient == 0) - (pixel_gradient == 45) + (
+            pixel_gradient == 135)
+    neighbour_two_j = np.tile(np.arange(height)[:, np.newaxis], width) + (pixel_gradient == 45) + (
+            pixel_gradient == 90) + (pixel_gradient == 135)
+
+    valid_neighbour_one = (neighbour_one_i >= 0) & (neighbour_one_i < width) & (neighbour_one_j >= 0) & (
+            neighbour_one_j < height)
+    valid_neighbour_two = (neighbour_two_i >= 0) & (neighbour_two_i < width) & (neighbour_two_j >= 0) & (
+            neighbour_two_j < height)
+
+    neighbour_one = np.zeros_like(magnitude).astype(int)
+    neighbour_one[valid_neighbour_one] = magnitude[
+        neighbour_one_j[valid_neighbour_one], neighbour_one_i[valid_neighbour_one]]
+    neighbour_two = np.zeros_like(magnitude).astype(int)
+    neighbour_two[valid_neighbour_two] = magnitude[
+        neighbour_two_j[valid_neighbour_two], neighbour_two_i[valid_neighbour_two]]
+    cur = magnitude
+
+    return (neighbour_one <= cur) & (neighbour_two <= cur)
+
+
 class SeqGeneralHoughTransform:
-    def __init__(self, src: np.array, template: np.array):
-        self.src = Image(src.shape[1], src.shape[0], src)
-        self.template = Image(template.shape[1], template.shape[0], template)
+    def __init__(self, src: np.array, template: np.array, image_dir=IMAGE_DIR):
+        self.src = src
+        self.height_src = src.shape[0]
+        self.width_src = src.shape[1]
+        self.template = template
+        self.height_template = template.shape[0]
+        self.width_template = template.shape[1]
         self.r_table = [[] for _ in range(N_ROTATION_SLICES)]
+        self.image_dir = image_dir
 
     def process_template(self):
         print("----------Start processing template----------\n")
         time_process = 0
 
         # Gray convert
-        gray_src = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.convertToGray(self.template, gray_src)
+        gray_template = self.convertToGray(self.template)
         end = time.time()
         time_process += end - start
 
         # Sobel filter
-        magnitude_x = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
-        magnitude_y = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.convolve(sobel_filter_x, gray_src, magnitude_x)
-        self.convolve(sobel_filter_y, gray_src, magnitude_y)
+        magnitude_x = self.convolve(sobel_filter_x, gray_template)
+        magnitude_y = self.convolve(sobel_filter_y, gray_template)
         end = time.time()
         time_process += end - start
 
         # Magnitude and orientation
-        magnitude = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.magnitude(magnitude_x, magnitude_y, magnitude)
-        end = time.time()
-        time_process += end - start
-        orientation = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
-        start = time.time()
-        self.orientation(magnitude_x, magnitude_y, orientation)
+        magnitude = self.magnitude(magnitude_x, magnitude_y)
+        orientation = self.orientation(magnitude_x, magnitude_y)
         end = time.time()
         time_process += end - start
 
         # Edge minmax
-        edge_minmax = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.edgemns(magnitude, orientation, edge_minmax)
+        edge_minmax = self.edgemns(magnitude, orientation)
         end = time.time()
         time_process += end - start
 
         # Threshold
-        mag_threshold = GrayImage(self.template.data.shape[1], self.template.data.shape[0])
         start = time.time()
-        self.threshold(edge_minmax, mag_threshold, THRESHOLD)
+        mag_threshold = self.threshold(edge_minmax, THRESHOLD, type_input='template')
         end = time.time()
         time_process += end - start
 
@@ -80,59 +105,104 @@ class SeqGeneralHoughTransform:
         print("----------End processing template----------\n")
         print(f"Time processing template: {time_process}\n")
 
-    def convertToGray(self, image, result, type_input=None):
-        result.data = np.mean(image.data, axis=2)
-        if type_input in ['template', 'src']:
-            plt.imshow(result.data, cmap='gray')
-            plt.savefig(f'{IMAGE_DIR}/gray_{type_input}.png')
+    def accumulate_src(self):
+        print("----------Start accumulating src----------\n")
+        time_process = 0
 
-    def convolve(self, sobel_filter: np.array, gray_src: GrayImage, result: GrayImage, axis='x', type_input=None):
-        """
-        :param sobel_filter:
-        :param gray_src:
-        :param result:
-        :param axis: 'x' or 'y'
-        :return:
-        """
+        # Gray convert
+        start = time.time()
+        gray_src = self.convertToGray(self.src)
+        end = time.time()
+        time_process += end - start
+
+        # Sobel filter
+        start = time.time()
+        magnitude_x = self.convolve(sobel_filter_x, gray_src)
+        magnitude_y = self.convolve(sobel_filter_y, gray_src)
+        end = time.time()
+        time_process += end - start
+
+        # Magnitude and orientation
+        start = time.time()
+        magnitude = self.magnitude(magnitude_x, magnitude_y)
+        orientation = self.orientation(magnitude_x, magnitude_y)
+        end = time.time()
+        time_process += end - start
+
+        # Edge minmax
+        start = time.time()
+        edge_minmax = self.edgemns(magnitude, orientation)
+        end = time.time()
+        time_process += end - start
+
+        # Threshold
+        start = time.time()
+        mag_threshold = self.threshold(edge_minmax, THRESHOLD)
+        end = time.time()
+        time_process += end - start
+
+        # Accumulate
+        start = time.time()
+        self.accumulate(mag_threshold, orientation)
+        end = time.time()
+        time_process += end - start
+
+        print("----------End accumulating src----------\n")
+        print(f"Time process: {time_process}s\n")
+
+    def convertToGray(self, image, type_input=None):
+        result = np.mean(image.data, axis=2)
+        if type_input in ['template', 'src']:
+            plt.imshow(result, cmap='gray')
+            plt.savefig(f'{self.image_dir}/gray_{type_input}.png')
+        return result
+
+    def convolve(self, sobel_filter: np.array, gray_src: np.array, axis='x', type_input=None):
         if sobel_filter.shape != (3, 3):
             raise Exception("Sobel filter must be 3x3")
 
-        result.data = np.convolve(gray_src.data.flatten(), sobel_filter.flatten(), 'same').reshape(gray_src.data.shape)
+        result = np.convolve(gray_src.flatten(), sobel_filter.flatten(), 'same').reshape(gray_src.shape)
         if type_input in ['template', 'src']:
-            plt.imshow(result.data, cmap='gray')
-            plt.savefig(f'{IMAGE_DIR}/sobel_{axis}_{type_input}.png')
+            plt.imshow(result, cmap='gray')
+            plt.savefig(f'{self.image_dir}/sobel_{axis}_{type_input}.png')
+        return result
 
-    def magnitude(self, magnitude_x: GrayImage, magnitude_y: GrayImage, result: GrayImage, type_input=None):
-        result.data = np.sqrt(np.square(magnitude_x.data) + np.square(magnitude_y.data))
+    def magnitude(self, magnitude_x: np.array, magnitude_y: np.array, type_input=None):
+        result = np.sqrt(np.square(magnitude_x) + np.square(magnitude_y))
         if type_input in ['template', 'src']:
-            plt.imshow(result.data, cmap='gray')
-            plt.savefig(f'{IMAGE_DIR}/magnitude_{type_input}.png')
+            plt.imshow(result, cmap='gray')
+            plt.savefig(f'{self.image_dir}/magnitude_{type_input}.png')
+        return result
 
-    def orientation(self, gradient_x, gradient_y, result):
-        phi = np.arctan2(gradient_y.data, gradient_x.data)
-        result.data = np.mod(phi * 180 / np.pi + 360, 360)
+    def orientation(self, magnitude_x: np.array, magnitude_y: np.array):
+        phi = np.arctan2(magnitude_y, magnitude_x)
+        result = np.mod(phi * 180 / np.pi + 360, 360)
+        return result
 
-    def edgemns(self, magnitude: GrayImage, orientation: GrayImage, result, type_input=None):
-        pixel_gradient = ((orientation.data // 45).astype(int) * 45 % 180)
-        result.data = np.where(keep_pixel_np(magnitude, pixel_gradient), magnitude.data, 0)
+    def edgemns(self, magnitude: np.array, orientation: np.array, type_input=None):
+        pixel_gradient = ((orientation // 45).astype(int) * 45 % 180)
+        result = np.where(keep_pixel_np(magnitude, pixel_gradient), magnitude, 0)
         if type_input in ['template', 'src']:
-            plt.imshow(result.data, cmap='gray')
-            plt.savefig(f'{IMAGE_DIR}/edge_minmax_{type_input}.png')
+            plt.imshow(result, cmap='gray')
+            plt.savefig(f'{self.image_dir}/edge_minmax_{type_input}.png')
+        return result
 
-    def threshold(self, magnitude: GrayImage, result: GrayImage, threshold: int, type_input=None):
-        result.data = np.where(magnitude.data > threshold, 255, 0)
+    def threshold(self, magnitude: np.array, threshold: int, type_input=None):
+        result = np.where(magnitude > threshold, 255, 0)
         if type_input in ['template', 'src']:
-            plt.imshow(result.data, cmap='gray')
-            plt.savefig(f'{IMAGE_DIR}/threshold_{type_input}.png')
+            plt.imshow(result, cmap='gray')
+            plt.savefig(f'{self.image_dir}/threshold_{type_input}.png')
+            plt.plot()
+        return result
 
-    def create_r_table(self, orientation, magnitude_threshold):
-        indices_j, indices_i = np.where(magnitude_threshold.data == 255)
+    def create_r_table(self, orientation: np.array, magnitude_threshold: np.array):
+        indices_j, indices_i = np.where(magnitude_threshold == 255)
 
-        phi = np.fmod(orientation.data[indices_j, indices_i], 360)
+        phi = np.fmod(orientation[indices_j, indices_i], 360)
         i_slice = (phi / DELTA_ROTATION_ANGLE).astype(int)
 
-        center_x = orientation.width // 2
-        center_y = orientation.height // 2
+        center_x = self.width_template // 2
+        center_y = self.height_template // 2
         entry_x = center_x - indices_i
         entry_y = center_y - indices_j
 
@@ -143,9 +213,9 @@ class SeqGeneralHoughTransform:
             entry = {'r': r[i], 'alpha': alpha[i]}
             self.r_table[i_slice[i]].append(entry)
 
-    def accumulate(self, mag_threshold: GrayImage, orient: GrayImage, image_dir=IMAGE_DIR):
-        width = self.src.data.shape[1]
-        height = self.src.data.shape[0]
+    def accumulate(self, mag_threshold: np.array, orient: np.array):
+        width = self.width_src
+        height = self.height_src
         wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
         hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
 
@@ -155,8 +225,8 @@ class SeqGeneralHoughTransform:
         _max = 0
         for j in range(height):
             for i in range(width):
-                if mag_threshold.data[j][i] == 255:
-                    phi = orient.data[j][i]
+                if mag_threshold[j][i] == 255:
+                    phi = orient[j][i]
                     i_slice = int(phi // DELTA_ROTATION_ANGLE)
                     entries = self.r_table[i_slice]
                     for entry in entries:
@@ -175,67 +245,12 @@ class SeqGeneralHoughTransform:
                         if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
                             _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
 
-        maxima_thres = round(_max * THRESHOLD_RATIO)
-        plt.imshow(self.src.data)
+        maxima_threshold = round(_max * THRESHOLD_RATIO)
+        plt.imshow(self.src)
         for j in range(hblock):
             for i in range(wblock):
-                if block_maxima[j][i]['hits'] > maxima_thres:
+                if block_maxima[j][i]['hits'] > maxima_threshold:
                     plt.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
 
-        plt.savefig(f'{image_dir}/output.png')
+        plt.savefig(f'{self.image_dir}/output.png')
         plt.show()
-
-    def accumulate_src(self, image_dir):
-        print("----------Start accumulating src----------\n")
-        time_process = 0
-
-        # Gray convert
-        gray_src = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        start = time.time()
-        self.convertToGray(self.src, gray_src)
-        end = time.time()
-        time_process += end - start
-
-        # Sobel filter
-        magnitude_x = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        magnitude_y = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        start = time.time()
-        self.convolve(sobel_filter_x, gray_src, magnitude_x)
-        self.convolve(sobel_filter_y, gray_src, magnitude_y)
-        end = time.time()
-        time_process += end - start
-
-        # Magnitude and orientation
-        magnitude = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        start = time.time()
-        self.magnitude(magnitude_x, magnitude_y, magnitude)
-        end = time.time()
-        time_process += end - start
-        orientation = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        start = time.time()
-        self.orientation(magnitude_x, magnitude_y, orientation)
-        end = time.time()
-        time_process += end - start
-
-        # Edge minmax
-        edge_minmax = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        start = time.time()
-        self.edgemns(magnitude, orientation, edge_minmax)
-        end = time.time()
-        time_process += end - start
-
-        # Threshold
-        mag_threshold = GrayImage(self.src.data.shape[1], self.src.data.shape[0])
-        start = time.time()
-        self.threshold(edge_minmax, mag_threshold, THRESHOLD)
-        end = time.time()
-        time_process += end - start
-
-        # Accumulate
-        start = time.time()
-        self.accumulate(mag_threshold, orientation, image_dir)
-        end = time.time()
-        time_process += end - start
-
-        print("----------End accumulating src----------\n")
-        print(f"Time process: {time_process}s\n")
