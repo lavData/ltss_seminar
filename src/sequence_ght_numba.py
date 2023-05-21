@@ -2,6 +2,7 @@ import math
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+from numba import jit
 
 
 THRESHOLD = 200
@@ -21,35 +22,7 @@ sobel_filter_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
 sobel_filter_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
 
 
-# Keep Pixel function by numpy
-def keep_pixel_np(magnitude: np.ndarray, pixel_gradient: np.ndarray):
-    height, width = magnitude.shape
-    neighbour_one_i = np.tile(np.arange(width), (height, 1)) - (pixel_gradient == 0) + (pixel_gradient == 45) - (
-            pixel_gradient == 135)
-    neighbour_one_j = np.tile(np.arange(height)[:, np.newaxis], width) - (pixel_gradient == 45) - (
-            pixel_gradient == 90) - (pixel_gradient == 135)
-    neighbour_two_i = np.tile(np.arange(width), (height, 1)) + (pixel_gradient == 0) - (pixel_gradient == 45) + (
-            pixel_gradient == 135)
-    neighbour_two_j = np.tile(np.arange(height)[:, np.newaxis], width) + (pixel_gradient == 45) + (
-            pixel_gradient == 90) + (pixel_gradient == 135)
-
-    valid_neighbour_one = (neighbour_one_i >= 0) & (neighbour_one_i < width) & (neighbour_one_j >= 0) & (
-            neighbour_one_j < height)
-    valid_neighbour_two = (neighbour_two_i >= 0) & (neighbour_two_i < width) & (neighbour_two_j >= 0) & (
-            neighbour_two_j < height)
-
-    neighbour_one = np.zeros_like(magnitude).astype(int)
-    neighbour_one[valid_neighbour_one] = magnitude[
-        neighbour_one_j[valid_neighbour_one], neighbour_one_i[valid_neighbour_one]]
-    neighbour_two = np.zeros_like(magnitude).astype(int)
-    neighbour_two[valid_neighbour_two] = magnitude[
-        neighbour_two_j[valid_neighbour_two], neighbour_two_i[valid_neighbour_two]]
-    cur = magnitude
-
-    return (neighbour_one <= cur) & (neighbour_two <= cur)
-
-
-class SeqGeneralHoughTransform:
+class SeqGeneralHoughTransformNumba:
     def __init__(self, src: np.array, template: np.array, image_dir=IMAGE_DIR):
         self.src = src
         self.height_src = src.shape[0]
@@ -143,76 +116,139 @@ class SeqGeneralHoughTransform:
 
         # Accumulate
         start = time.time()
-        self.accumulate(mag_threshold, orientation)
+        block_maxima, maxima_threshold = self.accumulate(mag_threshold, orientation)
         end = time.time()
         time_process += end - start
+
+        # Draw
+        wblock = (self.width_src + BLOCK_SIZE - 1) // BLOCK_SIZE
+        hblock = (self.height_src + BLOCK_SIZE - 1) // BLOCK_SIZE
+        plt.imshow(self.src)
+        for j in range(hblock):
+            for i in range(wblock):
+                if block_maxima[j][i]['hits'] > maxima_threshold:
+                    plt.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
+
+        plt.savefig(f'{self.image_dir}/output.png')
+        plt.show()
 
         print("----------End accumulating src----------\n")
         print(f"Time process: {time_process}s\n")
 
+    @jit(cache=True)
     def convertToGray(self, image, type_input=None):
-        result = np.mean(image.data, axis=2)
-        if type_input in ['template', 'src']:
-            plt.imshow(result, cmap='gray')
-            plt.savefig(f'{self.image_dir}/gray_{type_input}.png')
+        result = np.zeros(image.shape[:2], dtype=np.float64)
+        for i in range(image.shape[0]):
+            for j in range(image.shape[1]):
+                result[i][j] = 0.299 * image[i][j][0] + 0.587 * image[i][j][1] + 0.114 * image[i][j][2]
+
         return result
 
+    @jit(cache=True)
     def convolve(self, sobel_filter: np.array, gray_src: np.array, axis='x', type_input=None):
-        if sobel_filter.shape != (3, 3):
-            raise Exception("Sobel filter must be 3x3")
+        result = np.zeros_like(gray_src)
+        for i in range(gray_src.shape[0]):
+            for j in range(gray_src.shape[1]):
+                temp = 0
+                for jj in range(-1, 2):
+                    for ii in range(-1, 2):
+                        jj_pad = max(0, min(gray_src.shape[1] - 1, j + jj))
+                        ii_pad = max(0, min(gray_src.shape[0] - 1, i + ii))
+                        temp += gray_src[ii_pad][jj_pad] * sobel_filter[ii + 1][jj + 1]
+                result[i][j] = temp
 
-        result = np.convolve(gray_src.flatten(), sobel_filter.flatten(), 'same').reshape(gray_src.shape)
-        if type_input in ['template', 'src']:
-            plt.imshow(result, cmap='gray')
-            plt.savefig(f'{self.image_dir}/sobel_{axis}_{type_input}.png')
         return result
 
+    @jit(cache=True)
     def magnitude(self, magnitude_x: np.array, magnitude_y: np.array, type_input=None):
-        result = np.sqrt(np.square(magnitude_x) + np.square(magnitude_y))
-        if type_input in ['template', 'src']:
-            plt.imshow(result, cmap='gray')
-            plt.savefig(f'{self.image_dir}/magnitude_{type_input}.png')
+        result = np.zeros_like(magnitude_x)
+        for i in range(magnitude_x.shape[0]):
+            for j in range(magnitude_x.shape[1]):
+                result[i][j] = math.sqrt(magnitude_x[i][j] ** 2 + magnitude_y[i][j] ** 2)
+
         return result
 
+    @jit(cache=True)
     def orientation(self, magnitude_x: np.array, magnitude_y: np.array):
-        phi = np.arctan2(magnitude_y, magnitude_x)
-        result = np.mod(phi * 180 / np.pi + 360, 360)
+        result = np.zeros_like(magnitude_x)
+        for i in range(magnitude_x.shape[0]):
+            for j in range(magnitude_x.shape[1]):
+                result[i][j] = (math.atan2(magnitude_y[i][j], magnitude_x[i][j]) * 180 / math.pi + 360) % 360
         return result
 
+    @jit(cache=True)
     def edgemns(self, magnitude: np.array, orientation: np.array, type_input=None):
-        pixel_gradient = ((orientation // 45).astype(int) * 45 % 180)
-        result = np.where(keep_pixel_np(magnitude, pixel_gradient), magnitude, 0)
-        if type_input in ['template', 'src']:
-            plt.imshow(result, cmap='gray')
-            plt.savefig(f'{self.image_dir}/edge_minmax_{type_input}.png')
+        result = np.zeros_like(magnitude)
+        for i in range(magnitude.shape[0]):
+            for j in range(magnitude.shape[1]):
+                pixel_gradient = int(orientation[i][j] // 45) * 45 % 180
+                neighbour_one_i = i
+                neighbour_one_j = j
+                neighbour_two_i = i
+                neighbour_two_j = j
+
+                if pixel_gradient == 0:
+                    neighbour_one_i = i - 1
+                    neighbour_two_i = i + 1
+                elif pixel_gradient == 45:
+                    neighbour_one_i = i + 1
+                    neighbour_one_j = j - 1
+                    neighbour_two_i = i - 1
+                    neighbour_two_j = j + 1
+                elif pixel_gradient == 90:
+                    neighbour_one_j = j - 1
+                    neighbour_two_j = j + 1
+                elif pixel_gradient == 135:
+                    neighbour_one_i = i - 1
+                    neighbour_one_j = j - 1
+                    neighbour_two_i = i + 1
+                    neighbour_two_j = j + 1
+
+                neighbour_one_i = max(0, min(magnitude.shape[0] - 1, neighbour_one_i))
+                neighbour_one_j = max(0, min(magnitude.shape[1] - 1, neighbour_one_j))
+                neighbour_two_i = max(0, min(magnitude.shape[0] - 1, neighbour_two_i))
+                neighbour_two_j = max(0, min(magnitude.shape[1] - 1, neighbour_two_j))
+
+                neighbour_one = magnitude[neighbour_one_i][neighbour_one_j]
+                neighbour_two = magnitude[neighbour_two_i][neighbour_two_j]
+
+                if (neighbour_one <= magnitude[i][j]) & (neighbour_two <= magnitude[i][j]):
+                    result[i][j] = magnitude[i][j]
+                else:
+                    result[i][j] = 0
         return result
 
+    @jit(cache=True)
     def threshold(self, magnitude: np.array, threshold: int, type_input=None):
-        result = np.where(magnitude > threshold, 255, 0)
-        if type_input in ['template', 'src']:
-            plt.imshow(result, cmap='gray')
-            plt.savefig(f'{self.image_dir}/threshold_{type_input}.png')
-            plt.plot()
+        result = np.zeros_like(magnitude)
+        for i in range(magnitude.shape[0]):
+            for j in range(magnitude.shape[1]):
+                if magnitude[i][j] > threshold:
+                    result[i][j] = 255
+                else:
+                    result[i][j] = 0
         return result
 
+    @jit(cache=True)
     def create_r_table(self, orientation: np.array, magnitude_threshold: np.array):
-        indices_j, indices_i = np.where(magnitude_threshold == 255)
+        for i in range(orientation.shape[0]):
+            for j in range(orientation.shape[1]):
+                if magnitude_threshold[i][j] == 255:
+                    phi = orientation[i][j] % 360
+                    i_slice = int(phi // DELTA_ROTATION_ANGLE)
 
-        phi = np.fmod(orientation[indices_j, indices_i], 360)
-        i_slice = (phi / DELTA_ROTATION_ANGLE).astype(int)
+                    center_x = self.width_template // 2
+                    center_y = self.height_template // 2
+                    entry_x = center_x - j
+                    entry_y = center_y - i
 
-        center_x = self.width_template // 2
-        center_y = self.height_template // 2
-        entry_x = center_x - indices_i
-        entry_y = center_y - indices_j
+                    r = math.sqrt(entry_x ** 2 + entry_y ** 2)
+                    alpha = math.atan2(entry_y, entry_x)
 
-        r = np.sqrt(entry_x ** 2 + entry_y ** 2)
-        alpha = np.arctan2(entry_y, entry_x)
+                    entry = {'r': r, 'alpha': alpha}
+                    self.r_table[i_slice].append(entry)
 
-        for i in range(len(indices_i)):
-            entry = {'r': r[i], 'alpha': alpha[i]}
-            self.r_table[i_slice[i]].append(entry)
-
+    @jit(cache=True)
     def accumulate(self, mag_threshold: np.array, orient: np.array):
         width = self.width_src
         height = self.height_src
@@ -244,13 +280,6 @@ class SeqGeneralHoughTransform:
                         block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
                         if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
                             _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
-
         maxima_threshold = round(_max * THRESHOLD_RATIO)
-        plt.imshow(self.src)
-        for j in range(hblock):
-            for i in range(wblock):
-                if block_maxima[j][i]['hits'] > maxima_threshold:
-                    plt.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
 
-        plt.savefig(f'{self.image_dir}/output.png')
-        plt.show()
+        return block_maxima, maxima_threshold
