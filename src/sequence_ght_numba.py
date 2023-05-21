@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numba import jit
 
-
 THRESHOLD = 200
 N_ROTATION_SLICES = 72
 MAX_SCALE = 1.4
@@ -15,7 +14,6 @@ BLOCK_SIZE = 10
 THRESHOLD_RATIO = 0.3
 DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
 IMAGE_DIR = '../../images'
-
 
 # numpy array sobel filter
 sobel_filter_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
@@ -255,7 +253,7 @@ class SeqGeneralHoughTransformNumba:
         wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
         hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
 
-        accumulator = np.zeros((hblock, wblock), dtype=np.int32)
+        accumulator = np.zeros((N_SCALE_SLICE, N_ROTATION_SLICES, hblock, wblock), dtype=np.int32)
         block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
 
         _max = 0
@@ -263,23 +261,31 @@ class SeqGeneralHoughTransformNumba:
             for i in range(width):
                 if mag_threshold[j][i] == 255:
                     phi = orient[j][i]
-                    i_slice = int(phi // DELTA_ROTATION_ANGLE)
-                    entries = self.r_table[i_slice]
-                    for entry in entries:
-                        r = entry['r']
-                        alpha = entry['alpha']
-                        xc = int(i + r * math.cos(alpha))
-                        yc = int(j + r * math.sin(alpha))
+                    for i_theta in range(N_ROTATION_SLICES):
+                        theta = i_theta * DELTA_ROTATION_ANGLE
+                        theta_r = math.radians(theta)
+                        i_slice = int(((phi - theta + 360) % 360) // DELTA_ROTATION_ANGLE)
+                        entries = self.r_table[i_slice]
+                        for entry in entries:
+                            r = entry['r']
+                            alpha = entry['alpha']
+                            for scale in range(N_SCALE_SLICE):
+                                s = scale * DELTA_SCALE_RATIO + MIN_SCALE
+                                xc = int(i + r * s * math.cos(alpha + theta_r))
+                                yc = int(j + r * s * math.sin(alpha + theta_r))
 
-                        if xc < 0 or xc >= width or yc < 0 or yc >= height:
-                            continue
-                        accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
-                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits'] = accumulator[yc // BLOCK_SIZE][
-                            xc // BLOCK_SIZE]
-                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['x'] = xc
-                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
-                        if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
-                            _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
+                                if xc < 0 or xc >= width or yc < 0 or yc >= height:
+                                    continue
+                                accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
+                                if accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE] > \
+                                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits']:
+                                    block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits'] = \
+                                        accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE]
+                                    block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['x'] = xc
+                                    block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
+                                    if accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
+                                        _max = accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE]
+
         maxima_threshold = round(_max * THRESHOLD_RATIO)
 
         return block_maxima, maxima_threshold
