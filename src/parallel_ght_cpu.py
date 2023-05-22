@@ -3,6 +3,8 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from numba import jit, prange
+from numba import config
+config.THREADING_LAYER = 'omp'
 
 THRESHOLD = 200
 N_ROTATION_SLICES = 72
