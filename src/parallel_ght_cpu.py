@@ -30,6 +30,9 @@ class ParallelGeneralHoughTransformCPU:
         self.width_template = template.shape[1]
         self.r_table = [[] for _ in range(N_ROTATION_SLICES)]
         self.image_dir = image_dir
+        self.wblock = (self.width_src + BLOCK_SIZE - 1) // BLOCK_SIZE
+        self.hblock = (self.height_src + BLOCK_SIZE - 1) // BLOCK_SIZE
+
 
     def process_template(self):
         print("----------Start processing template----------\n")
@@ -123,8 +126,11 @@ class ParallelGeneralHoughTransformCPU:
         time_process += end - start
 
         # Accumulate
+        accumulator4D = np.zeros((N_SCALE_SLICE, N_ROTATION_SLICES, self.hblock, self.wblock), dtype=np.int32)
+        accumulator = np.zeros((self.hblock, self.wblock), dtype=np.int32)
+        block_maxima = np.zeros((self.hblock, self.wblock), dtype=[('x', int), ('y', int), ('hits', int)])
         start = time.time()
-        block_maxima, maxima_threshold = self.accumulate(mag_threshold, orientation)
+        block_maxima, maxima_threshold = self.accumulate(mag_threshold, orientation, accumulator, block_maxima)
         end = time.time()
         time_process += end - start
 
@@ -242,18 +248,10 @@ class ParallelGeneralHoughTransformCPU:
                     self.r_table[i_slice].append(entry)
 
     @jit(cache=True)
-    def accumulate4D(self, mag_threshold: np.array, orient: np.array):
-        width = self.width_src
-        height = self.height_src
-        wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
-        hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
-
-        accumulator = np.zeros((N_SCALE_SLICE, N_ROTATION_SLICES, hblock, wblock), dtype=np.int32)
-        block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
-
+    def accumulate4D(self, mag_threshold: np.array, orient: np.array, accumulator: np.array, block_maxima: np.array):
         _max = 0
-        for j in range(height):
-            for i in range(width):
+        for j in range(self.height_src):
+            for i in range(self.width_src):
                 if mag_threshold[j][i] == 255:
                     phi = orient[j][i]
                     for i_theta in range(N_ROTATION_SLICES):
@@ -269,7 +267,7 @@ class ParallelGeneralHoughTransformCPU:
                                 xc = int(i + r * s * math.cos(alpha + theta_r))
                                 yc = int(j + r * s * math.sin(alpha + theta_r))
 
-                                if xc < 0 or xc >= width or yc < 0 or yc >= height:
+                                if xc < 0 or xc >= self.width_src or yc < 0 or yc >= self.height_src:
                                     continue
                                 accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
                                 if accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE] > \
@@ -280,24 +278,15 @@ class ParallelGeneralHoughTransformCPU:
                                     block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
                                     if accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
                                         _max = accumulator[scale][i_theta][yc // BLOCK_SIZE][xc // BLOCK_SIZE]
-
         maxima_threshold = round(_max * THRESHOLD_RATIO)
 
         return block_maxima, maxima_threshold
 
-    @jit(cache=True)
-    def accumulate(self, mag_threshold: np.array, orient: np.array):
-        width = self.width_src
-        height = self.height_src
-        wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
-        hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
-
-        accumulator = np.zeros((hblock, wblock), dtype=np.int32)
-        block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
-
+    @jit(parallel=True, cache=True)
+    def accumulate(self, mag_threshold: np.array, orient: np.array, accumulator: np.array, block_maxima: np.array):
         _max = 0
-        for j in range(height):
-            for i in range(width):
+        for j in prange(self.height_src):
+            for i in prange(self.width_src):
                 if mag_threshold[j][i] == 255:
                     phi = orient[j][i]
                     i_slice = int(phi // DELTA_ROTATION_ANGLE)
@@ -308,7 +297,7 @@ class ParallelGeneralHoughTransformCPU:
                         xc = int(i + r * math.cos(alpha))
                         yc = int(j + r * math.sin(alpha))
 
-                        if xc < 0 or xc >= width or yc < 0 or yc >= height:
+                        if xc < 0 or xc >= self.width_src or yc < 0 or yc >= self.height_src:
                             continue
                         accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
                         block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits'] = accumulator[yc // BLOCK_SIZE][
@@ -317,6 +306,5 @@ class ParallelGeneralHoughTransformCPU:
                         block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
                         if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
                             _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
-
         maxima_threshold = round(_max * THRESHOLD_RATIO)
         return block_maxima, maxima_threshold
