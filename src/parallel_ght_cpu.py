@@ -248,7 +248,7 @@ class ParallelGeneralHoughTransformCPU:
                     self.r_table[i_slice].append(entry)
 
     @jit(cache=True)
-    def accumulate4D(self, mag_threshold: np.array, orient: np.array, accumulator: np.array, block_maxima: np.array):
+    def accumulate4D(self, mag_threshold: np.array, orient: np.array, accumulator: np.array, block_maxima: np.array,):
         _max = 0
         for j in range(self.height_src):
             for i in range(self.width_src):
@@ -282,11 +282,11 @@ class ParallelGeneralHoughTransformCPU:
 
         return block_maxima, maxima_threshold
 
-    @jit(parallel=True, cache=True)
+    @jit(cache=True)
     def accumulate(self, mag_threshold: np.array, orient: np.array, accumulator: np.array, block_maxima: np.array):
         _max = 0
-        for j in prange(self.height_src):
-            for i in prange(self.width_src):
+        for j in range(self.height_src):
+            for i in range(self.width_src):
                 if mag_threshold[j][i] == 255:
                     phi = orient[j][i]
                     i_slice = int(phi // DELTA_ROTATION_ANGLE)
