@@ -52,27 +52,31 @@ class ParallelGeneralHoughTransformCPU:
         time_process += end - start
 
         # Magnitude and orientation
+        magnitude_tpl = np.zeros_like(gray_template)
+        orientation_tpl = np.zeros_like(gray_template)
         start = time.time()
-        magnitude = self.magnitude(magnitude_x, magnitude_y)
-        orientation = self.orientation(magnitude_x, magnitude_y)
+        self.magnitude(magnitude_x, magnitude_y, magnitude_tpl)
+        self.orientation(magnitude_x, magnitude_y, orientation_tpl)
         end = time.time()
         time_process += end - start
 
         # Edge minmax
+        edge_minmax_tpl = np.zeros_like(gray_template)
         start = time.time()
-        edge_minmax = self.edgemns(magnitude, orientation)
+        self.edgemns(magnitude_tpl, orientation_tpl, edge_minmax_tpl)
         end = time.time()
         time_process += end - start
 
         # Threshold
+        threshold_tpl = np.zeros_like(gray_template)
         start = time.time()
-        mag_threshold = self.threshold(edge_minmax, THRESHOLD, type_input='template')
+        self.threshold(edge_minmax_tpl, THRESHOLD, threshold_tpl, type_input='template')
         end = time.time()
         time_process += end - start
 
         # Create R-table
         start = time.time()
-        self.create_r_table(orientation, mag_threshold)
+        self.create_r_table(orientation_tpl, threshold_tpl)
         end = time.time()
         time_process += end - start
 
@@ -157,28 +161,22 @@ class ParallelGeneralHoughTransformCPU:
                         temp += gray_src[ii_pad][jj_pad] * sobel_filter[ii + 1][jj + 1]
                 magnitude[i][j] = temp
 
-    @jit(cache=True)
-    def magnitude(self, magnitude_x: np.array, magnitude_y: np.array, type_input=None):
-        result = np.zeros_like(magnitude_x)
-        for i in range(magnitude_x.shape[0]):
-            for j in range(magnitude_x.shape[1]):
-                result[i][j] = math.sqrt(magnitude_x[i][j] ** 2 + magnitude_y[i][j] ** 2)
+    @jit(parallel=True, cache=True)
+    def magnitude(self, magnitude_x: np.array, magnitude_y: np.array, _magnitude: np.array, type_input=None):
+        for i in prange(magnitude_x.shape[0]):
+            for j in prange(magnitude_x.shape[1]):
+                _magnitude[i][j] = math.sqrt(magnitude_x[i][j] ** 2 + magnitude_y[i][j] ** 2)
 
-        return result
+    @jit(parallel=True, cache=True)
+    def orientation(self, magnitude_x: np.array, magnitude_y: np.array, _orientation: np.array):
+        for i in prange(magnitude_x.shape[0]):
+            for j in prange(magnitude_x.shape[1]):
+                _orientation[i][j] = (math.atan2(magnitude_y[i][j], magnitude_x[i][j]) * 180 / math.pi + 360) % 360
 
-    @jit(cache=True)
-    def orientation(self, magnitude_x: np.array, magnitude_y: np.array):
-        result = np.zeros_like(magnitude_x)
-        for i in range(magnitude_x.shape[0]):
-            for j in range(magnitude_x.shape[1]):
-                result[i][j] = (math.atan2(magnitude_y[i][j], magnitude_x[i][j]) * 180 / math.pi + 360) % 360
-        return result
-
-    @jit(cache=True)
-    def edgemns(self, magnitude: np.array, orientation: np.array, type_input=None):
-        result = np.zeros_like(magnitude)
-        for i in range(magnitude.shape[0]):
-            for j in range(magnitude.shape[1]):
+    @jit(parallel=True, cache=True)
+    def edgemns(self, magnitude: np.array, orientation: np.array, result: np.array, type_input=None):
+        for i in prange(magnitude.shape[0]):
+            for j in prange(magnitude.shape[1]):
                 pixel_gradient = int(orientation[i][j] // 45) * 45 % 180
                 neighbour_one_i = i
                 neighbour_one_j = j
@@ -214,23 +212,20 @@ class ParallelGeneralHoughTransformCPU:
                     result[i][j] = magnitude[i][j]
                 else:
                     result[i][j] = 0
-        return result
 
-    @jit(cache=True)
-    def threshold(self, magnitude: np.array, threshold: int, type_input=None):
-        result = np.zeros_like(magnitude)
-        for i in range(magnitude.shape[0]):
-            for j in range(magnitude.shape[1]):
+    @jit(parallel=True, cache=True)
+    def threshold(self, magnitude: np.array, threshold: int, result: np.array, type_input=None):
+        for i in prange(magnitude.shape[0]):
+            for j in prange(magnitude.shape[1]):
                 if magnitude[i][j] > threshold:
                     result[i][j] = 255
                 else:
                     result[i][j] = 0
-        return result
 
-    @jit(cache=True)
+    @jit(parallel=True, cache=True)
     def create_r_table(self, orientation: np.array, magnitude_threshold: np.array):
-        for i in range(orientation.shape[0]):
-            for j in range(orientation.shape[1]):
+        for i in prange(orientation.shape[0]):
+            for j in prange(orientation.shape[1]):
                 if magnitude_threshold[i][j] == 255:
                     phi = orientation[i][j] % 360
                     i_slice = int(phi // DELTA_ROTATION_ANGLE)
