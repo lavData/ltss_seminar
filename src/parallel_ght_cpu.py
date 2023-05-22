@@ -107,30 +107,33 @@ class ParallelGeneralHoughTransformCPU:
         time_process += end - start
 
         # Magnitude and orientation
+        magnitude_src = np.zeros_like(gray_src)
+        orientation_src = np.zeros_like(gray_src)
         start = time.time()
-        magnitude = self.magnitude(magnitude_x, magnitude_y)
-        orientation = self.orientation(magnitude_x, magnitude_y)
+        self.magnitude(magnitude_x, magnitude_y, magnitude_src)
+        self.orientation(magnitude_x, magnitude_y, orientation_src)
         end = time.time()
         time_process += end - start
 
         # Edge minmax
+        edge_minmax = np.zeros_like(gray_src)
         start = time.time()
-        edge_minmax = self.edgemns(magnitude, orientation)
+        self.edgemns(magnitude_src, orientation_src, edge_minmax)
         end = time.time()
         time_process += end - start
 
         # Threshold
+        mag_threshold = np.zeros_like(gray_src)
         start = time.time()
-        mag_threshold = self.threshold(edge_minmax, THRESHOLD)
+        self.threshold(edge_minmax, THRESHOLD, mag_threshold)
         end = time.time()
         time_process += end - start
 
         # Accumulate
-        accumulator4D = np.zeros((N_SCALE_SLICE, N_ROTATION_SLICES, self.hblock, self.wblock), dtype=np.int32)
         accumulator = np.zeros((self.hblock, self.wblock), dtype=np.int32)
         block_maxima = np.zeros((self.hblock, self.wblock), dtype=[('x', int), ('y', int), ('hits', int)])
         start = time.time()
-        block_maxima, maxima_threshold = self.accumulate(mag_threshold, orientation, accumulator, block_maxima)
+        block_maxima, maxima_threshold = self.accumulate(mag_threshold, orientation_src, accumulator, block_maxima)
         end = time.time()
         time_process += end - start
 
