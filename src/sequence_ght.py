@@ -1,3 +1,4 @@
+import cv2
 import math
 import time
 import numpy as np
@@ -13,7 +14,7 @@ N_SCALE_SLICE = int((MAX_SCALE - MIN_SCALE) // DELTA_SCALE_RATIO + 1)
 BLOCK_SIZE = 10
 THRESHOLD_RATIO = 0.3
 DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
-IMAGE_DIR = '../../images'
+IMAGE_DIR = '../images'
 
 
 # numpy array sobel filter
@@ -254,3 +255,10 @@ class SeqGeneralHoughTransform:
 
         plt.savefig(f'{self.image_dir}/output.png')
         plt.show()
+
+if __name__ == '__main__':
+    src = cv2.imread(f'{IMAGE_DIR}/leaves.png')
+    template = cv2.imread(f'{IMAGE_DIR}/leaf.png')
+    ght = SeqGeneralHoughTransform(src, template, image_dir=IMAGE_DIR)
+    ght.process_template()
+    ght.accumulate_src()

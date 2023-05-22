@@ -1,3 +1,4 @@
+import cv2
 import math
 import time
 import numpy as np
@@ -13,7 +14,7 @@ N_SCALE_SLICE = int((MAX_SCALE - MIN_SCALE) // DELTA_SCALE_RATIO + 1)
 BLOCK_SIZE = 10
 THRESHOLD_RATIO = 0.3
 DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
-IMAGE_DIR = '../../images'
+IMAGE_DIR = '../images'
 
 # numpy array sobel filter
 sobel_filter_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
@@ -247,7 +248,7 @@ class SeqGeneralHoughTransformNumba:
                     self.r_table[i_slice].append(entry)
 
     @jit(cache=True)
-    def accumulate(self, mag_threshold: np.array, orient: np.array):
+    def accumulate4D(self, mag_threshold: np.array, orient: np.array):
         width = self.width_src
         height = self.height_src
         wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
@@ -289,3 +290,45 @@ class SeqGeneralHoughTransformNumba:
         maxima_threshold = round(_max * THRESHOLD_RATIO)
 
         return block_maxima, maxima_threshold
+
+    @jit(cache=True)
+    def accumulate(self, mag_threshold: np.array, orient: np.array):
+        width = self.width_src
+        height = self.height_src
+        wblock = (width + BLOCK_SIZE - 1) // BLOCK_SIZE
+        hblock = (height + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        accumulator = np.zeros((hblock, wblock), dtype=np.int32)
+        block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
+
+        _max = 0
+        for j in range(self.height_src):
+            for i in range(self.width_src):
+                if mag_threshold[j][i] == 255:
+                    phi = orient[j][i]
+                    i_slice = int(phi // DELTA_ROTATION_ANGLE)
+                    entries = self.r_table[i_slice]
+                    for entry in entries:
+                        r = entry['r']
+                        alpha = entry['alpha']
+                        xc = int(i + r * math.cos(alpha))
+                        yc = int(j + r * math.sin(alpha))
+
+                        if xc < 0 or xc >= self.width_src or yc < 0 or yc >= self.height_src:
+                            continue
+                        accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
+                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits'] = accumulator[yc // BLOCK_SIZE][
+                            xc // BLOCK_SIZE]
+                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['x'] = xc
+                        block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
+                        if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
+                            _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
+        maxima_threshold = round(_max * THRESHOLD_RATIO)
+        return block_maxima, maxima_threshold
+
+if __name__ == '__main__':
+    src = cv2.imread(f'{IMAGE_DIR}/leaves.png')
+    template = cv2.imread(f'{IMAGE_DIR}/leaf.png')
+    ght = SeqGeneralHoughTransformNumba(src, template, image_dir=IMAGE_DIR)
+    ght.process_template()
+    ght.accumulate_src()
