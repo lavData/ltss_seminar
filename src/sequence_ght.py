@@ -14,7 +14,25 @@ N_SCALE_SLICE = int((MAX_SCALE - MIN_SCALE) // DELTA_SCALE_RATIO + 1)
 BLOCK_SIZE = 10
 THRESHOLD_RATIO = 0.3
 DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
-IMAGE_DIR = '../images'
+IMAGE_DIR = 'drive/MyDrive/ltss_seminar/images'
+
+static_times = {
+    'convert_to_gray_tpl': 0,
+    'sobel_filter_tpl': 0,
+    'magnitude_tpl': 0,
+    'orientation_tpl': 0,
+    'edgemns_tpl': 0,
+    'threshold_tpl': 0,
+    'create_r_table': 0,
+    'convert_to_gray_src': 0,
+    'sobel_filter_src': 0,
+    'magnitude_src': 0,
+    'orientation_src': 0,
+    'edgemns_src': 0,
+    'threshold_src': 0,
+    'accumulate': 0,
+    'total': 0
+}
 
 
 # numpy array sobel filter
@@ -70,6 +88,7 @@ class SeqGeneralHoughTransform:
         gray_template = self.convertToGray(self.template)
         end = time.time()
         time_process += end - start
+        static_times['convert_to_gray_tpl'] = [end - start]
 
         # Sobel filter
         start = time.time()
@@ -77,31 +96,42 @@ class SeqGeneralHoughTransform:
         magnitude_y = self.convolve(sobel_filter_y, gray_template)
         end = time.time()
         time_process += end - start
+        static_times['sobel_filter_tpl'] = [end - start]
 
         # Magnitude and orientation
         start = time.time()
         magnitude = self.magnitude(magnitude_x, magnitude_y)
+        end = time.time()
+        time_process += end - start
+        static_times['magnitude_tpl'] = [end - start]
+
+        start = time.time()
         orientation = self.orientation(magnitude_x, magnitude_y)
         end = time.time()
         time_process += end - start
+        static_times['orientation_tpl'] = [end - start]
+
 
         # Edge minmax
         start = time.time()
         edge_minmax = self.edgemns(magnitude, orientation)
         end = time.time()
         time_process += end - start
+        static_times['edgemns_tpl'] = [end - start]
 
         # Threshold
         start = time.time()
         mag_threshold = self.threshold(edge_minmax, THRESHOLD, type_input='template')
         end = time.time()
         time_process += end - start
+        static_times['threshold_tpl'] = [end - start]
 
         # Create R-table
         start = time.time()
         self.create_r_table(orientation, mag_threshold)
         end = time.time()
         time_process += end - start
+        static_times['create_r_table'] = [end - start]
 
         print("----------End processing template----------\n")
         print(f"Time processing template: {time_process}\n")
@@ -115,6 +145,7 @@ class SeqGeneralHoughTransform:
         gray_src = self.convertToGray(self.src)
         end = time.time()
         time_process += end - start
+        static_times['convert_to_gray_src'] = [end - start]
 
         # Sobel filter
         start = time.time()
@@ -122,31 +153,42 @@ class SeqGeneralHoughTransform:
         magnitude_y = self.convolve(sobel_filter_y, gray_src)
         end = time.time()
         time_process += end - start
+        static_times['sobel_filter_src'] = [end - start]
 
         # Magnitude and orientation
         start = time.time()
         magnitude = self.magnitude(magnitude_x, magnitude_y)
+        end = time.time()
+        time_process += end - start
+        static_times['magnitude_src'] = [end - start]
+
+        start = time.time()
         orientation = self.orientation(magnitude_x, magnitude_y)
         end = time.time()
         time_process += end - start
+        static_times['orientation_src'] = [end - start]
 
         # Edge minmax
         start = time.time()
         edge_minmax = self.edgemns(magnitude, orientation)
         end = time.time()
         time_process += end - start
+        static_times['edgemns_src'] = [end - start]
 
         # Threshold
         start = time.time()
         mag_threshold = self.threshold(edge_minmax, THRESHOLD)
         end = time.time()
         time_process += end - start
+        static_times['threshold_src'] = [end - start]
 
         # Accumulate
         start = time.time()
         self.accumulate(mag_threshold, orientation)
         end = time.time()
         time_process += end - start
+        static_times['accumulate'] = [end - start]
+        static_times['total'] += time_process
 
         print("----------End accumulating src----------\n")
         print(f"Time process: {time_process}s\n")
