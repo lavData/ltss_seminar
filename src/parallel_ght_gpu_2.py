@@ -357,7 +357,7 @@ plt.imshow(src)
 for j in range(hblock):
     for i in range(wblock):
         if accumulator[j][i] > maxima_threshold:
-            plt.plot([accumulator[j, i, 0] * BLOCK_SIZE + BLOCK_SIZE // 2], [accumulator[j, i, 0] * BLOCK_SIZE + BLOCK_SIZE // 2], marker='o', color="yellow")
+            plt.plot(i * BLOCK_SIZE + BLOCK_SIZE // 2, j * BLOCK_SIZE + BLOCK_SIZE // 2, marker='o', color="yellow")
 
 plt.savefig(f'{IMAGE_DIR}/output.png')
 plt.show()
