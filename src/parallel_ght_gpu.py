@@ -1,4 +1,4 @@
-# %%writefile sequence_ght_numba.py
+# %%writefile parallel_ght_gpu.py
 import math
 import cv2
 import time
@@ -16,6 +16,9 @@ N_SCALE_SLICE = int((MAX_SCALE - MIN_SCALE) // DELTA_SCALE_RATIO + 1)
 BLOCK_SIZE = 10
 THRESHOLD_RATIO = 0.3
 DELTA_ROTATION_ANGLE = 360 / N_ROTATION_SLICES
+PHI_R_TABLE_INDEX = 0
+R_R_TABLE_INDEX = 1
+ALPHA_R_TABLE_INDEX = 2
 IMAGE_DIR = 'drive/MyDrive/ltss_seminar/images'
 
 # numpy array sobel filter
@@ -104,25 +107,48 @@ def threshold(magnitude: np.array, threshold: int, result: np.array):
         else:
             result[r][c] = 0
 
-@jit(cache=True)
+
+@cuda.jit
 def create_r_table(orientation: np.array, magnitude_threshold: np.array, width_template: int, height_template: int,
-                   r_table: list):
-    for i in range(orientation.shape[0]):
-        for j in range(orientation.shape[1]):
-            if magnitude_threshold[i][j] == 255:
-                phi = orientation[i][j] % 360
-                i_slice = int(phi // DELTA_ROTATION_ANGLE)
+                   r_table: np.array):
+    r, c = cuda.grid(2)
+    if r < orientation.shape[0] and c < orientation.shape[1]:
+        if magnitude_threshold[r][c] == 255:
+            phi = orientation[r][c] % 360
+            i_slice = int(phi // DELTA_ROTATION_ANGLE)
 
-                center_x = width_template // 2
-                center_y = height_template // 2
-                entry_x = center_x - j
-                entry_y = center_y - i
+            center_x = width_template // 2
+            center_y = height_template // 2
+            entry_x = center_x - c
+            entry_y = center_y - r
 
-                r = math.sqrt(entry_x ** 2 + entry_y ** 2)
-                alpha = math.atan2(entry_y, entry_x)
+            _r = math.sqrt(entry_x ** 2 + entry_y ** 2)
+            alpha = math.atan2(entry_y, entry_x)
 
-                entry = {'r': r, 'alpha': alpha}
-                r_table[i_slice].append(entry)
+            r_table[r, c, PHI_R_TABLE_INDEX] = i_slice
+            r_table[r, c, R_R_TABLE_INDEX] = _r
+            r_table[r, c, ALPHA_R_TABLE_INDEX] = alpha
+        else:
+            r_table[r, c, PHI_R_TABLE_INDEX] = -1
+
+@cuda.jit
+def num_edge_pixels_and_convert_r_table_to_1D(magnitude_threshold: np.array, _num_edge_pixels: int, r_table_1D: np.array, r_table: np.array):
+    r, c = cuda.grid(2)
+    if r < magnitude_threshold.shape[0] and c < magnitude_threshold.shape[1]:
+        if magnitude_threshold[r][c] == 255:
+            index = cuda.atomic.add(_num_edge_pixels, 0, 1)
+            r_table_1D[index, PHI_R_TABLE_INDEX] = r_table[r, c, PHI_R_TABLE_INDEX]
+            r_table_1D[index, R_R_TABLE_INDEX] = r_table[r, c, R_R_TABLE_INDEX]
+            r_table_1D[index, ALPHA_R_TABLE_INDEX] = r_table[r, c, ALPHA_R_TABLE_INDEX]
+
+@cuda.jit
+def num_edge_pixels_and_get_pixel_index(magnitude_threshold: np.array, _num_edge_pixels: int, edge_pixels_1D: np.array):
+    r, c = cuda.grid(2)
+    if r < magnitude_threshold.shape[0] and c < magnitude_threshold.shape[1]:
+        if magnitude_threshold[r][c] == 255:
+            index = cuda.atomic.add(_num_edge_pixels, 0, 1)
+            edge_pixels_1D[index, 0] = r
+            edge_pixels_1D[index, 1] = c
 
 
 @jit(cache=True)
@@ -162,33 +188,29 @@ def accumulate4D(mag_threshold: np.array, orient: np.array, width_src: int, heig
     return block_maxima, maxima_threshold
 
 
-@jit(cache=True)
-def accumulate(mag_threshold: np.array, orient: np.array, width_src: int, height_src: int,
-                 accumulator: np.array, block_maxima: np.array, r_table: list):
-    _max = 0
-    for j in range(height_src):
-        for i in range(width_src):
-            if mag_threshold[j][i] == 255:
-                phi = orient[j][i]
-                i_slice = int(phi // DELTA_ROTATION_ANGLE)
-                entries = r_table[i_slice]
-                for entry in entries:
-                    r = entry['r']
-                    alpha = entry['alpha']
-                    xc = int(i + r * math.cos(alpha))
-                    yc = int(j + r * math.sin(alpha))
+@cuda.jit
+def accumulate(edge_pixels: np.array, num_edge_pixels: int, orient: np.array, width_src: int, height_src: int,
+                 accumulator: np.array, r_table: list):
+    index = cuda.grid(1)
+    if (index >= num_edge_pixels):
+        return
 
-                    if xc < 0 or xc >= width_src or yc < 0 or yc >= height_src:
-                        continue
-                    accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] += 1
-                    block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['hits'] = accumulator[yc // BLOCK_SIZE][
-                        xc // BLOCK_SIZE]
-                    block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['x'] = xc
-                    block_maxima[yc // BLOCK_SIZE][xc // BLOCK_SIZE]['y'] = yc
-                    if accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE] > _max:
-                        _max = accumulator[yc // BLOCK_SIZE][xc // BLOCK_SIZE]
-    maxima_threshold = round(_max * THRESHOLD_RATIO)
-    return block_maxima, maxima_threshold
+    row = edge_pixels[index, 0]
+    col = edge_pixels[index, 1]
+
+    phi = orient[row, col]
+    i_slice = int(phi // DELTA_ROTATION_ANGLE)
+    for entry in r_table:
+        if int(entry[PHI_R_TABLE_INDEX]) == i_slice:
+            r = entry[R_R_TABLE_INDEX]
+            alpha = entry[ALPHA_R_TABLE_INDEX]
+            xc = int(col + r * math.cos(alpha))
+            yc = int(row + r * math.sin(alpha))
+
+            if xc < 0 or xc >= width_src or yc < 0 or yc >= height_src:
+                continue
+            accumulator_index = (yc // BLOCK_SIZE, xc // BLOCK_SIZE)
+            value_accum = cuda.atomic.add(accumulator, accumulator_index, 1)
 
 
 src = cv2.imread(f'{IMAGE_DIR}/leaves.png')
@@ -197,7 +219,7 @@ width_src = src.shape[1]
 template = cv2.imread(f'{IMAGE_DIR}/leaf.png')
 height_template = template.shape[0]
 width_template = template.shape[1]
-r_table = [[] for _ in range(N_ROTATION_SLICES)]
+r_table = np.zeros((height_template, width_template, 3), dtype=np.float64)
 block_size = (32, 32)
 grid_size_template = (math.ceil(height_template / block_size[0]), math.ceil(width_template / block_size[1]))
 grid_size_src = (math.ceil(height_src / block_size[0]), math.ceil(width_src / block_size[1]))
@@ -240,17 +262,26 @@ end = time.time()
 time_process += end - start
 
 # Threshold
-mag_threshold_tpl = np.zeros_like(gray_template)
+mag_threshold_tpl = np.zeros_like(gray_template, dtype=np.int32)
 start = time.time()
 threshold[grid_size_template, block_size](edge_minmax_tpl, THRESHOLD, mag_threshold_tpl)
 end = time.time()
 time_process += end - start
 
-# Create R-table
+# Create R-tablek
 start = time.time()
-create_r_table(orientation_tpl, mag_threshold_tpl, width_template, height_template, r_table)
+create_r_table[grid_size_template, block_size](orientation_tpl, mag_threshold_tpl, width_template, height_template,
+                                               r_table)
 end = time.time()
 time_process += end - start
+
+# Convert 2D R_table to 1D R_table
+_num_edge_pixels_tpl_np = np.zeros(1, dtype=np.int32)
+_num_edge_pixels_tpl = cuda.to_device(_num_edge_pixels_tpl_np)
+r_table_1D = np.zeros((height_template * width_template, 3), dtype=np.float64)
+num_edge_pixels_and_convert_r_table_to_1D[grid_size_template, block_size](mag_threshold_tpl, _num_edge_pixels_tpl, r_table_1D, r_table)
+num_edge_pixels_tpl = _num_edge_pixels_tpl.copy_to_host()[0]
+r_table_1D = r_table_1D[:num_edge_pixels_tpl]
 
 print("----------End processing template----------\n")
 print(f"Time processing template: {time_process}\n")
@@ -293,28 +324,40 @@ end = time.time()
 time_process += end - start
 
 # Threshold
-mag_threshold_src = np.zeros_like(gray_src)
+mag_threshold_src = np.zeros_like(gray_src, dtype=np.int32)
 start = time.time()
 threshold[grid_size_src, block_size](edge_minmax_src, THRESHOLD, mag_threshold_src)
 end = time.time()
 time_process += end - start
 
-# Accumulate
-accumulator = np.zeros((hblock, wblock), dtype=np.int32)
-block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
-start = time.time()
-block_maxima, maxima_threshold = accumulate(mag_threshold_src, orientation_src, width_src, height_src, accumulator, block_maxima, r_table)
-end = time.time()
-time_process += end - start
+# Edge pixels
+_num_edge_pixels_src_np = np.zeros(1, dtype=np.int32)
+_num_edge_pixels_src = cuda.to_device(_num_edge_pixels_src_np)
+edge_pixel_src = np.zeros((height_src * width_src, 2), dtype=np.int32)
+num_edge_pixels_and_get_pixel_index[grid_size_src, block_size](mag_threshold_src, _num_edge_pixels_src, edge_pixel_src)
+num_edge_pixels_src = _num_edge_pixels_src.copy_to_host()[0]
+edge_pixel_src = edge_pixel_src[:num_edge_pixels_src]
 
-# Draw
-wblock = (width_src + BLOCK_SIZE - 1) // BLOCK_SIZE
-hblock = (height_src + BLOCK_SIZE - 1) // BLOCK_SIZE
+# Accumulate
+_accumulator = np.zeros((hblock, wblock), dtype=np.int32)
+accumulator = cuda.to_device(_accumulator)
+thread_per_block = 32
+blocks = (hblock * wblock + thread_per_block - 1) // thread_per_block
+# block_maxima = np.zeros((hblock, wblock), dtype=[('x', int), ('y', int), ('hits', int)])
+start = time.time()
+accumulate[blocks, thread_per_block](edge_pixel_src, num_edge_pixels_src, orientation_src, width_src, height_src, accumulator, r_table_1D)
+end = time.time()
+accumulator = accumulator.copy_to_host()
+
+maxima_threshold = THRESHOLD_RATIO * accumulator.max()
+time_process += end - start
+#
+# # Draw
 plt.imshow(src)
 for j in range(hblock):
     for i in range(wblock):
-        if block_maxima[j][i]['hits'] > maxima_threshold:
-            plt.plot([block_maxima[j][i]['x']], [block_maxima[j][i]['y']], marker='o', color="yellow")
+        if accumulator[j][i] > maxima_threshold:
+            plt.plot([accumulator[j, i, 0] * BLOCK_SIZE + BLOCK_SIZE // 2], [accumulator[j, i, 0] * BLOCK_SIZE + BLOCK_SIZE // 2], marker='o', color="yellow")
 
 plt.savefig(f'{IMAGE_DIR}/output.png')
 plt.show()
